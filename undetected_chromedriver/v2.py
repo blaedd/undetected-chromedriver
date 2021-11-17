@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -83,20 +84,20 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
     session_id = None
 
     def __init__(
-            self,
-            executable_path=None,
-            port=0,
-            options=None,
-            enable_cdp_events=False,
-            service_args=None,
-            desired_capabilities=None,
-            service_log_path=None,
-            keep_alive=False,
-            log_level=0,
-            headless=False,
-            delay=5,
-            version_main=None,
-            patcher_force_close=False,
+        self,
+        executable_path=None,
+        port=0,
+        options=None,
+        enable_cdp_events=False,
+        service_args=None,
+        desired_capabilities=None,
+        service_log_path=None,
+        keep_alive=False,
+        log_level=0,
+        headless=False,
+        delay=5,
+        version_main=None,
+        patcher_force_close=False,
     ):
         """
         Creates a new instance of the chrome driver.
@@ -105,7 +106,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
 
         Parameters
         ----------
-        executable_path: str, optional, default: None - use find_chrome_executable
+        executable_path: str, optional, default: None
             Path to the executable. If the default is used it assumes the executable is in the $PATH
 
         port: int, optional, default: 0
@@ -277,9 +278,9 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
         # fix exit_type flag to prevent tab-restore nag
         try:
             with open(
-                    os.path.join(user_data_dir, "Default/Preferences"),
-                    encoding="latin1",
-                    mode="r+",
+                os.path.join(user_data_dir, "Default/Preferences"),
+                encoding="latin1",
+                mode="r+",
             ) as fs:
                 config = json.load(fs)
                 if config["profile"]["exit_type"] is not None:
@@ -298,14 +299,6 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
 
         self.browser_pid = start_detached(options.binary_location, *options.arguments)
 
-        # self.browser = subprocess.Popen(
-        #     [options.binary_location, *options.arguments],
-        #     stdin=subprocess.PIPE,
-        #     stdout=subprocess.PIPE,
-        #     stderr=subprocess.PIPE,
-        #     close_fds=IS_POSIX,
-        # )
-
         super(Chrome, self).__init__(
             executable_path=patcher.executable_path,
             port=port,
@@ -315,17 +308,6 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
             service_log_path=service_log_path,
             keep_alive=keep_alive,
         )
-        # intentional
-        # self.webdriver = selenium.webdriver.chrome.webdriver.WebDriver(
-        #     executable_path=patcher.executable_path,
-        #     port=port,
-        #     options=options,
-        #     service_args=service_args,
-        #     desired_capabilities=desired_capabilities,
-        #     service_log_path=service_log_path,
-        #     keep_alive=keep_alive,
-        # )
-
         self.reactor = None
         if enable_cdp_events:
 
@@ -340,19 +322,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
 
         if options.headless:
             self._configure_headless()
-
         orig_get = self.get
-
-        # def get_wrapped(*args, **kwargs):
-
-        #     self.execute_cdp_cmd(
-        #         "Network.setExtraHTTPHeaders",
-        #         {"headers": {"dnt": "1", "cache-control": "no-cache"}},
-        #     )
-        #
-        #     return orig_get(*args, **kwargs)
-        #
-        # self.get = get_wrapped
 
     def _configure_headless(self):
 
@@ -530,26 +500,38 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
         return object.__dir__(self)
 
     def get(self, url):
+        try:
+            tabs = requests.get(
+                "http://{0}:{1}/json".format(*self.options.debugger_address.split(":"))
+            ).json()
+            for tab in tabs:
+                if tab["type"] == "page":
+                    break
 
-        tabs = requests.get('http://{0}:{1}/json'.format(*self.options.debugger_address.split(':'))).json()
-        for tab in tabs:
-            if tab['type'] == 'page':
-                break
+            async def _get():
+                wsurl = tab["webSocketDebuggerUrl"]
+                async with websockets.connect(wsurl) as ws:
+                    await ws.send(
+                        json.dumps(
+                            {"method": "Page.navigate", "params": {"url": url}, "id": 1}
+                        )
+                    )
+                    return await ws.recv()
 
-        async def _get():
-            wsurl = tab['webSocketDebuggerUrl']
-            async with websockets.connect(wsurl) as ws:
-                await ws.send(json.dumps({"method": "Page.navigate", "params": {"url": url}, "id": 1}))
-                return await ws.recv()
+            with self:
+                return asyncio.get_event_loop().run_until_complete(_get())
 
-        with self:
-            return asyncio.get_event_loop().run_until_complete(_get())
+        except Exception:
+            try:
+                return super().get(url)
+            except:
+                raise
 
     def add_cdp_listener(self, event_name, callback):
         if (
-                self.reactor
-                and self.reactor is not None
-                and isinstance(self.reactor, Reactor)
+            self.reactor
+            and self.reactor is not None
+            and isinstance(self.reactor, Reactor)
         ):
             self.reactor.add_event_handler(event_name, callback)
             return self.reactor.handlers
@@ -609,19 +591,16 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
             pass
         try:
             logger.debug("killing browser")
-            os.kill(self.browser_pid)
-            # self.browser.terminate()
-            # self.browser.wait(1)
-
+            os.kill(self.browser_pid, signal.SIGTERM)
         except TimeoutError as e:
             logger.debug(e, exc_info=True)
         except Exception:  # noqa
             pass
 
         if (
-                hasattr(self, "keep_user_data_dir")
-                and hasattr(self, "user_data_dir")
-                and not self.keep_user_data_dir
+            hasattr(self, "keep_user_data_dir")
+            and hasattr(self, "user_data_dir")
+            and not self.keep_user_data_dir
         ):
             for _ in range(5):
                 try:
@@ -651,8 +630,8 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
             curframe = inspect.currentframe()
             callframe = inspect.getouterframes(curframe, 2)
             caller = callframe[1][3]
-            logging.getLogger(__name__).debug('__enter__ caller: %s' % caller)
-            if caller == 'get':
+            logging.getLogger(__name__).debug("__enter__ caller: %s" % caller)
+            if caller == "get":
                 return
         except (AttributeError, ValueError, KeyError, OSError) as e:
             logging.getLogger(__name__).debug(e)
@@ -689,12 +668,12 @@ def find_chrome_executable():
             )
     else:
         for item in map(
-                os.environ.get, ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
+            os.environ.get, ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
         ):
             for subitem in (
-                    "Google/Chrome/Application",
-                    "Google/Chrome Beta/Application",
-                    "Google/Chrome Canary/Application",
+                "Google/Chrome/Application",
+                "Google/Chrome Beta/Application",
+                "Google/Chrome Canary/Application",
             ):
                 candidates.add(os.sep.join((item, subitem, "chrome.exe")))
     for candidate in candidates:
