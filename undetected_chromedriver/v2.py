@@ -368,7 +368,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
                     "Page.addScriptToEvaluateOnNewDocument",
                     {
                         "source": """
-                        
+
                             Object.defineProperty(window, 'navigator', {
                                 value: new Proxy(navigator, {
                                         has: (target, key) => (key === 'webdriver' ? false : key in target),
@@ -380,7 +380,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
                                                 target[key]
                                         })
                             });
-                            
+
                     """
                     },
                 )
@@ -465,7 +465,7 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
                     "Page.addScriptToEvaluateOnNewDocument",
                     {
                         "source": """
-                            
+
                             Object.defineProperty(window, 'chrome', {
                                 value: new Proxy(window.chrome, {
                                         has: (target, key) => true,
@@ -529,21 +529,21 @@ class Chrome(selenium.webdriver.chrome.webdriver.WebDriver):
     def __dir__(self):
         return object.__dir__(self)
 
-    def get(self, url):
+    # def get(self, url):
 
-        tabs = requests.get('http://{0}:{1}/json'.format(*self.options.debugger_address.split(':'))).json()
-        for tab in tabs:
-            if tab['type'] == 'page':
-                break
+    #     tabs = requests.get('http://{0}:{1}/json'.format(*self.options.debugger_address.split(':'))).json()
+    #     for tab in tabs:
+    #         if tab['type'] == 'page':
+    #             break
 
-        async def _get():
-            wsurl = tab['webSocketDebuggerUrl']
-            async with websockets.connect(wsurl) as ws:
-                await ws.send(json.dumps({"method": "Page.navigate", "params": {"url": url}, "id": 1}))
-                return await ws.recv()
+    #     async def _get():
+    #         wsurl = tab['webSocketDebuggerUrl']
+    #         async with websockets.connect(wsurl) as ws:
+    #             await ws.send(json.dumps({"method": "Page.navigate", "params": {"url": url}, "id": 1}))
+    #             return await ws.recv()
 
-        with self:
-            return asyncio.get_event_loop().run_until_complete(_get())
+    #     with self:
+    #         return asyncio.get_event_loop().run_until_complete(_get())
 
     def add_cdp_listener(self, event_name, callback):
         if (
